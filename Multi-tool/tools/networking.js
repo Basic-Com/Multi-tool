@@ -1,29 +1,34 @@
 const axios = require("axios");
+const dns = require("dns");
 const chalk = require("chalk");
 
 module.exports = {
   async ipLookup(ip) {
-    console.log(chalk.cyanBright(`[+] Looking up IP: ${ip}`));
     try {
-      const res = await axios.get(`http://ip-api.com/json/${ip}`);
-      if (res.data.status === "fail") {
-        console.log(chalk.red("[-] Invalid IP address"));
+      const res = await axios.get(`http://ip-api.com/json/${encodeURIComponent(ip)}`, { timeout: 10000 });
+      if (res.data) {
+        console.log(chalk.green("[✓] IP Lookup Result:"));
+        console.log(res.data);
       } else {
-        console.log(chalk.green("[✓] IP Info:"));
-        console.table(res.data);
+        console.log(chalk.red("[-] IP not found"));
       }
-    } catch {
-      console.log(chalk.red("[-] Error fetching IP info"));
+    } catch (err) {
+      console.log(chalk.red("[-] Failed to lookup IP:"), err.message);
     }
   },
 
   async pingHost(host) {
-    console.log(chalk.cyanBright(`[+] Checking host: ${host}`));
     try {
-      const res = await axios.get(`https://${host}`);
-      console.log(chalk.green(`[✓] Host responded with status: ${res.status}`));
-    } catch {
-      console.log(chalk.red("[-] Host unreachable"));
+      // quick DNS resolve as a simple "ping"
+      dns.lookup(host, (err, address) => {
+        if (err) {
+          console.log(chalk.red("[-] Host unreachable:", err.message));
+        } else {
+          console.log(chalk.green(`[✓] Host resolved: ${address}`));
+        }
+      });
+    } catch (err) {
+      console.log(chalk.red("[-] Ping error:"), err.message);
     }
   }
 };
