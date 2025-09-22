@@ -1,116 +1,106 @@
 const axios = require("axios");
 const chalk = require("chalk");
 
-// Decode Discord snowflake (ID -> creation date)
+// decode discord snowflake -> date
 function decodeSnowflake(id) {
   const discordEpoch = 1420070400000n;
-  return new Date(Number((BigInt(id) >> 22n) + discordEpoch));
+  try {
+    const created = new Date(Number((BigInt(id) >> 22n) + discordEpoch));
+    return created.toISOString();
+  } catch {
+    return "Invalid ID";
+  }
 }
 
 module.exports = {
-  // ✅ Webhook Check
   async webhookCheck(url) {
+    console.log(chalk.cyan(`[?] Checking webhook...`));
     try {
-      const res = await axios.get(url);
+      const res = await axios.get(url, { timeout: 10000 });
       if (res.status === 200 && res.data) {
         console.log(chalk.green("[✓] Webhook is valid!"));
         console.log(res.data);
+      } else {
+        console.log(chalk.red("[-] Webhook invalid or unreachable"));
       }
-    } catch {
-      console.log(chalk.red("[-] Webhook invalid or unreachable"));
-    }
-  },
-
-  // ✅ Webhook Delete
-  async deleteWebhook(url) {
-    try {
-      await axios.delete(url);
-      console.log(chalk.green("[✓] Webhook deleted successfully!"));
     } catch (err) {
-      console.log(chalk.red("[-] Failed to delete webhook"), err.message);
+      console.log(chalk.red("[-] Webhook check failed:"), err.response?.status || err.message);
     }
   },
 
-  // ✅ Webhook Spam
-  async spamWebhook(url, message, count = 5) {
+  async deleteWebhook(url) {
+    console.log(chalk.yellow(`[!] Deleting webhook...`));
+    try {
+      const res = await axios.delete(url, { timeout: 10000 });
+      if (res.status >= 200 && res.status < 300) {
+        console.log(chalk.green("[✓] Deleted webhook"));
+      } else {
+        console.log(chalk.red("[-] Failed to delete webhook"), res.status);
+      }
+    } catch (err) {
+      console.log(chalk.red("[-] Delete failed:"), err.response?.status || err.message);
+    }
+  },
+
+  async spamWebhook(url, message, count = 5, delay = 800) {
+    console.log(chalk.yellow(`[!] Spamming webhook: ${count} messages (delay ${delay}ms)`));
     for (let i = 0; i < count; i++) {
       try {
-        await axios.post(url, { content: message });
+        await axios.post(url, { content: message }, { timeout: 10000 });
         console.log(chalk.green(`[✓] Sent ${i + 1}/${count}`));
       } catch (err) {
-        console.log(chalk.red(`[-] Failed at ${i + 1}`), err.message);
+        console.log(chalk.red(`[-] Failed at ${i + 1}:`), err.response?.status || err.message);
         break;
       }
-      await new Promise(res => setTimeout(res, 500)); // 0.5s delay
+      await new Promise(r => setTimeout(r, Number(delay) || 800));
     }
   },
 
-  // ✅ Invite Lookup
-async inviteInfo(invite) {
-  try {
-    // Strip both https://discord.gg/ and discord.gg/ if present
-    invite = invite
-      .replace(/^https?:\/\/discord\.gg\//, "")
-      .replace(/^discord\.gg\//, "")
-      .trim();
-
-    const res = await axios.get(
-      `https://discord.com/api/v10/invites/${invite}?with_counts=true&with_expiration=true`
-    );
-
-    const data = res.data;
-    console.log(chalk.green("\n[✓] Invite Found!"));
-    console.log(chalk.yellow("Server:"), data.guild?.name || "Unknown");
-    console.log(chalk.yellow("Members:"), data.approximate_member_count);
-    console.log(chalk.yellow("Online:"), data.approximate_presence_count);
-    console.log(chalk.yellow("Invite Code:"), data.code);
-
-    if (data.guild?.icon) {
-      console.log(
-        chalk.yellow("Icon URL:"),
-        `https://cdn.discordapp.com/icons/${data.guild.id}/${data.guild.icon}.png`
-      );
+  async inviteInfo(invite) {
+    try {
+      // normalize invite input (strip full urls, query strings)
+      const cleaned = String(invite).trim().replace(/(^https?:\/\/)?(www\.)?discord\.gg\/?/, "").replace(/\?.*$/, "");
+      const res = await axios.get(`https://discord.com/api/v10/invites/${encodeURIComponent(cleaned)}?with_counts=true&with_expiration=true`, { timeout: 10000 });
+      console.log(chalk.green("[✓] Invite Info:"));
+      const d = res.data;
+      console.log("Server:", d.guild?.name || "N/A");
+      console.log("Members:", d.approximate_member_count ?? "N/A");
+      console.log("Online:", d.approximate_presence_count ?? "N/A");
+      console.log("Invite Code:", d.code || "N/A");
+      if (d.guild?.id && d.guild?.icon) {
+        console.log("Icon URL:", `https://cdn.discordapp.com/icons/${d.guild.id}/${d.guild.icon}.png`);
+      }
+    } catch (err) {
+      console.log(chalk.red("[-] Invite lookup failed:"), err.response?.status || err.message);
     }
-  } catch (err) {
-    console.log(
-      chalk.red("[-] Invite lookup failed:"),
-      err.response?.status || err.message
-    );
-  }
-},
+  },
 
-
-  // ✅ Guild Lookup (requires BOT token in env)
   async guildLookup(guildId) {
     try {
-      const res = await axios.get(
-        `https://discord.com/api/v10/guilds/${guildId}`,
-        {
-          headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` }
-        }
-      );
-
-      const data = res.data;
-      console.log(chalk.green("\n[✓] Guild Found!"));
-      console.log(chalk.yellow("Name:"), data.name);
-      console.log(chalk.yellow("Owner ID:"), data.owner_id);
-      console.log(chalk.yellow("ID:"), data.id);
-      console.log(chalk.yellow("Created At:"), decodeSnowflake(data.id));
+      if (!process.env.BOT_TOKEN) {
+        console.log(chalk.red("[-] BOT_TOKEN not set in environment. Guild lookup requires a bot token."));
+        return;
+      }
+      const res = await axios.get(`https://discord.com/api/v10/guilds/${encodeURIComponent(guildId)}`, {
+        headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` },
+        timeout: 10000
+      });
+      console.log(chalk.green("[✓] Guild Info:"));
+      console.log("Name:", res.data.name);
+      console.log("ID:", res.data.id);
+      console.log("Owner ID:", res.data.owner_id);
+      console.log("Features:", res.data.features?.join(", ") || "N/A");
+      console.log("Created At:", decodeSnowflake(res.data.id));
     } catch (err) {
-      console.log(
-        chalk.red("[-] Guild lookup failed:"),
-        err.response?.status || err.message
-      );
+      console.log(chalk.red("[-] Guild lookup failed:"), err.response?.status || err.message);
     }
   },
 
-  // ✅ Guild ID Lookup (snowflake only)
   guildIdLookup(guildId) {
     try {
-      const createdAt = decodeSnowflake(guildId);
-      console.log(chalk.green("\n[✓] Guild ID Decoded!"));
-      console.log(chalk.yellow("Guild ID:"), guildId);
-      console.log(chalk.yellow("Created At:"), createdAt);
+      console.log(chalk.green("[✓] Guild ID Lookup:"));
+      console.log("Guild ID:", guildId);
+      console.log("Created At:", decodeSnowflake(guildId));
     } catch {
       console.log(chalk.red("[-] Invalid Guild ID"));
     }
